@@ -42,7 +42,10 @@ type socksConn struct {
 	conn   net.Conn
 }
 
-const SOCKS_VERSION_5 = 0x05
+const (
+	VERSION_5        = 0x05
+	NO_AUTH_REQUIRED = 0x00
+)
 
 func (s *socksConn) handle() error {
 	defer s.conn.Close()
@@ -52,10 +55,47 @@ func (s *socksConn) handle() error {
 		return err
 	}
 
-	if header[0] != SOCKS_VERSION_5 {
-		return fmt.Errorf("header: socks version wrong. expected %x got %x", SOCKS_VERSION_5, header[0])
+	// SOCKS version
+	if header[0] != VERSION_5 {
+		return fmt.Errorf("header: socks version wrong. expected %x got %x", VERSION_5, header[0])
+	}
+	// NMETHODS
+	if header[1] == 0 {
+		return fmt.Errorf("header: no authentication methods defined")
 	}
 
+	// METHOD
+	methods, err := s.read(int(header[1]))
+	if err != nil {
+		return err
+	}
+
+	if !hasNoAuthMethod(methods) {
+		return fmt.Errorf("header: client did not request NO AUTHENTICATION REQUIRED (%x) method: % x", NO_AUTH_REQUIRED, methods)
+	}
+
+	// send NO_AUTH_REQUIRED response
+	if err := s.write(VERSION_5, NO_AUTH_REQUIRED); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func hasNoAuthMethod(methods []byte) bool {
+	for _, m := range methods {
+		if m == NO_AUTH_REQUIRED {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *socksConn) write(data ...byte) error {
+	n, err := s.conn.Write(data)
+	if n < len(data) || err != nil {
+		return fmt.Errorf("could not write to connection: %v", err)
+	}
 	return nil
 }
 
