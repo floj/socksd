@@ -151,7 +151,11 @@ func (s *socksConn) handle() error {
 }
 
 func atypIp4(s *socksConn) (*atypdef, error) {
-	return nil, nil
+	bytes, err := s.read(4)
+	if err != nil {
+		return nil, err}
+	def := atypdef{proto: "tcp4", addr: IP(bytes).String() }
+	return def, nil
 }
 func atypIp6(s *socksConn) (*atypdef, error) {
 	return nil, nil
