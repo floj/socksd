@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
@@ -40,12 +41,32 @@ func handle(conn net.Conn, connId int) {
 type socksConn struct {
 	connId int
 	conn   net.Conn
+	sConn  net.Conn
 }
 
 const (
-	VERSION_5        = 0x05
-	NO_AUTH_REQUIRED = 0x00
+	VERSION_5             = 0x05
+	NO_AUTH_REQUIRED      = 0x00
+	NO_ACCEPTABLE_METHODS = 0xFF
+	CONNECT               = 0x01
+	BIND                  = 0x02
+	UDP_ASSOCIATE         = 0x03
+	RESERVED              = 0x00
+	ATYP_IP_V4            = 0x01
+	ATYP_DOMAINNAME       = 0x03
+	ATYP_IP_V6            = 0x04
 )
+
+var (
+	validCmds   = []byte{CONNECT, BIND, UDP_ASSOCIATE}
+	validAtypes = []byte{ATYP_IP_V4, ATYP_DOMAINNAME, ATYP_IP_V6}
+)
+
+type atypdef struct {
+	raw   []byte
+	proto string
+	addr  string
+}
 
 func (s *socksConn) handle() error {
 	defer s.conn.Close()
@@ -57,11 +78,11 @@ func (s *socksConn) handle() error {
 
 	// SOCKS version
 	if header[0] != VERSION_5 {
-		return fmt.Errorf("header: socks version wrong. expected %x got %x", VERSION_5, header[0])
+		return fmt.Errorf("header: VER expected %x got %x", VERSION_5, header[0])
 	}
 	// NMETHODS
 	if header[1] == 0 {
-		return fmt.Errorf("header: no authentication methods defined")
+		return fmt.Errorf("header: NMETHODS zero")
 	}
 
 	// METHOD
@@ -71,7 +92,11 @@ func (s *socksConn) handle() error {
 	}
 
 	if !hasNoAuthMethod(methods) {
-		return fmt.Errorf("header: client did not request NO AUTHENTICATION REQUIRED (%x) method: % x", NO_AUTH_REQUIRED, methods)
+		if err = s.write(VERSION_5, NO_ACCEPTABLE_METHODS); err != nil {
+			return err
+		}
+		//TODO: reutrn nil instead since this is not a "real" errer/valid behaviour?
+		return fmt.Errorf("header: METHODS must contain %x (NO AUTH REQUIRED): % x", NO_AUTH_REQUIRED, methods)
 	}
 
 	// send NO_AUTH_REQUIRED response
@@ -79,7 +104,60 @@ func (s *socksConn) handle() error {
 		return err
 	}
 
+	request, err := s.read(4)
+	if err != nil {
+		return err
+	}
+
+	if request[0] != VERSION_5 {
+		return fmt.Errorf("connect: VER expected %x got %x", VERSION_5, request[0])
+	}
+
+	cmd := request[1]
+	if bytes.IndexByte(validCmds, cmd) < 0 {
+		return fmt.Errorf("connect: CMD expected do be one of (% x) got %x", validCmds, cmd)
+	}
+
+	if request[2] != RESERVED {
+		return fmt.Errorf("connect: RSV expected %x got %x", RESERVED, request[2])
+	}
+
+	atyp := request[3]
+	var atypfunc func(s *socksConn) (*atypdef, error)
+	switch atyp {
+	case ATYP_IP_V4:
+		atypfunc = atypIp4
+	case ATYP_DOMAINNAME:
+		atypfunc = atypDomainname
+	case ATYP_IP_V6:
+		atypfunc = atypIp6
+	default:
+		return fmt.Errorf("connect: ATYP expected do be one of (% x) got %x", validAtypes, atyp)
+	}
+
+	def, err := atypfunc(s)
+	if err != nil {
+		return err
+	}
+
+	destPort := 80
+	sConn, err := net.Dial(def.proto, fmt.Sprintf("%s:%d", def.addr, destPort))
+	if err != nil {
+		return fmt.Errorf("could not connect do destionation host: %v", err)
+	}
+	s.sConn = sConn
+
 	return nil
+}
+
+func atypIp4(s *socksConn) (*atypdef, error) {
+	return nil, nil
+}
+func atypIp6(s *socksConn) (*atypdef, error) {
+	return nil, nil
+}
+func atypDomainname(s *socksConn) (*atypdef, error) {
+	return nil, nil
 }
 
 func hasNoAuthMethod(methods []byte) bool {
