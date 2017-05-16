@@ -153,15 +153,35 @@ func (s *socksConn) handle() error {
 func atypIp4(s *socksConn) (*atypdef, error) {
 	bytes, err := s.read(4)
 	if err != nil {
-		return nil, err}
-	def := atypdef{proto: "tcp4", addr: IP(bytes).String() }
+		return nil, err
+	}
+	def := &atypdef{raw: bytes, proto: "tcp4", addr: net.IP(bytes).String()}
 	return def, nil
 }
 func atypIp6(s *socksConn) (*atypdef, error) {
-	return nil, nil
+	bytes, err := s.read(16)
+	if err != nil {
+		return nil, err
+	}
+	def := &atypdef{raw: bytes, proto: "tcp6", addr: net.IP(bytes).String()}
+	return def, nil
 }
 func atypDomainname(s *socksConn) (*atypdef, error) {
-	return nil, nil
+	n, err := s.read(1)
+	if err != nil {
+		return nil, err
+	}
+	len := int(n[0])
+	name, err := s.read(len)
+	if err != nil {
+		return nil, err
+	}
+	raw := make([]byte, len+1)
+	raw = append(raw, n[0])
+	raw = append(raw, name...)
+
+	def := &atypdef{raw: raw, proto: "tcp", addr: string(name)}
+	return def, nil
 }
 
 func hasNoAuthMethod(methods []byte) bool {
