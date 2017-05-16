@@ -57,6 +57,8 @@ const (
 	ATYP_DOMAINNAME       = 0x03
 	ATYP_IP_V6            = 0x04
 	BUFFER_SIZE           = 1024
+	CMD_SUCCESS           = 0x00
+	CMD_HOST_UNREACHABLE  = 0x04
 )
 
 var (
@@ -70,8 +72,15 @@ type atypdef struct {
 	addr  string
 }
 
+func (s *socksConn) log(format string, vars ...interface{}) {
+	prefix := fmt.Sprintf("%d->%s", s.connId, s.sConn.RemoteAddr())
+	log.Printf(prefix+format+"\n", vars...)
+}
+
 func (s *socksConn) handle() error {
 	defer s.conn.Close()
+
+	s.log("reading header")
 
 	header, err := s.read(2)
 	if err != nil {
@@ -106,6 +115,7 @@ func (s *socksConn) handle() error {
 		return err
 	}
 
+	s.log("reading request")
 	request, err := s.read(4)
 	if err != nil {
 		return err
@@ -148,14 +158,31 @@ func (s *socksConn) handle() error {
 	}
 
 	destPort := int(pbuf[0])<<8 | int(pbuf[1])
+	dest := fmt.Sprintf("%s:%d", def.addr, destPort)
 
-	sConn, err := net.Dial(def.proto, fmt.Sprintf("%s:%d", def.addr, destPort))
+	resp := make([]byte, 4+2+len(def.raw))
+	resp = append(resp, request...)
+	resp = append(resp, def.raw...)
+	resp = append(resp, pbuf...)
+
+	s.log("connecting to %s", dest)
+	sConn, err := net.Dial(def.proto, dest)
 	if err != nil {
+		resp[1] = CMD_HOST_UNREACHABLE
+		if wErr := s.write(resp...); wErr != nil {
+			return wErr
+		}
 		return fmt.Errorf("could not connect do destionation host: %v", err)
 	}
 	defer sConn.Close()
 	s.sConn = sConn
 
+	resp[1] = CMD_SUCCESS
+	if err = s.write(resp...); err != nil {
+		return err
+	}
+
+	s.log("forwading data")
 	go copy(s.conn, s.sConn)
 	err = copy(s.sConn, s.conn)
 
