@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 )
@@ -55,6 +56,7 @@ const (
 	ATYP_IP_V4            = 0x01
 	ATYP_DOMAINNAME       = 0x03
 	ATYP_IP_V6            = 0x04
+	BUFFER_SIZE           = 1024
 )
 
 var (
@@ -140,14 +142,42 @@ func (s *socksConn) handle() error {
 		return err
 	}
 
-	destPort := 80
+	pbuf, err := s.read(2)
+	if err != nil {
+		return err
+	}
+
+	destPort := int(pbuf[0])<<8 | int(pbuf[1])
+
 	sConn, err := net.Dial(def.proto, fmt.Sprintf("%s:%d", def.addr, destPort))
 	if err != nil {
 		return fmt.Errorf("could not connect do destionation host: %v", err)
 	}
+	defer sConn.Close()
 	s.sConn = sConn
 
-	return nil
+	go copy(s.conn, s.sConn)
+	err = copy(s.sConn, s.conn)
+
+	return err
+}
+
+func copy(src, dest net.Conn) error {
+	buf := make([]byte, BUFFER_SIZE)
+	for {
+		n, rErr := src.Read(buf)
+		if rErr != io.EOF && rErr != nil {
+			return rErr
+		}
+
+		if _, wErr := dest.Write(buf[:n]); wErr != nil {
+			return wErr
+		}
+
+		if rErr == io.EOF {
+			return nil
+		}
+	}
 }
 
 func atypIp4(s *socksConn) (*atypdef, error) {
