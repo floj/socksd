@@ -7,17 +7,20 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 )
 
 func main() {
 
-	port := flag.Int("port", 8888, "specify port to listen on")
+	var port int
+	flag.IntVar(&port, "port", 8888, "specify port to listen on")
 	flag.Parse()
 
-	log.Println("Listening on", *port)
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+	info("Listening on %d", port)
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		log.Fatalf("Could not listen for connections: %v\n", err)
+		errorLog("Could not listen for connections: %v", err)
+		os.Exit(1)
 	}
 
 	connCounter := 0
@@ -25,7 +28,7 @@ func main() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("Could not accept connection: %v\n", err)
+			errorLog("Could not accept connection: %v", err)
 		}
 		go handle(conn, connCounter)
 		connCounter++
@@ -35,14 +38,14 @@ func main() {
 func handle(conn net.Conn, connId int) {
 	s := socksConn{connId: connId, conn: conn}
 	if err := s.handle(); err != nil {
-		log.Printf("Error handling connection %d: %v\n", connId, err)
+		errorLog("= error handling connection %d: %v", connId, err)
 	}
 }
 
 type socksConn struct {
-	connId int
-	conn   net.Conn
-	sConn  net.Conn
+	connId   int
+	conn     net.Conn
+	destConn net.Conn
 }
 
 const (
@@ -72,15 +75,22 @@ type atypdef struct {
 	addr  string
 }
 
-func (s *socksConn) log(format string, vars ...interface{}) {
-	prefix := fmt.Sprintf("%d->%s", s.connId, s.sConn.RemoteAddr())
-	log.Printf(prefix+format+"\n", vars...)
+func debug(format string, params ...interface{}) {
+	log.Printf("[DEBUG] "+format, params...)
+}
+
+func info(format string, params ...interface{}) {
+	log.Printf("[INFO]  "+format, params...)
+}
+
+func errorLog(format string, params ...interface{}) {
+	log.Printf("[ERROR] "+format, params...)
 }
 
 func (s *socksConn) handle() error {
 	defer s.conn.Close()
 
-	s.log("reading header")
+	info("< reading header")
 
 	header, err := s.read(2)
 	if err != nil {
@@ -115,7 +125,7 @@ func (s *socksConn) handle() error {
 		return err
 	}
 
-	s.log("reading request")
+	info("< reading request")
 	request, err := s.read(4)
 	if err != nil {
 		return err
@@ -160,12 +170,12 @@ func (s *socksConn) handle() error {
 	destPort := int(pbuf[0])<<8 | int(pbuf[1])
 	dest := fmt.Sprintf("%s:%d", def.addr, destPort)
 
-	resp := make([]byte, 4+2+len(def.raw))
+	resp := make([]byte, 0, 4+2+len(def.raw))
 	resp = append(resp, request...)
 	resp = append(resp, def.raw...)
 	resp = append(resp, pbuf...)
 
-	s.log("connecting to %s", dest)
+	info("> connectiong to %s", dest)
 	sConn, err := net.Dial(def.proto, dest)
 	if err != nil {
 		resp[1] = CMD_HOST_UNREACHABLE
@@ -175,16 +185,23 @@ func (s *socksConn) handle() error {
 		return fmt.Errorf("could not connect do destionation host: %v", err)
 	}
 	defer sConn.Close()
-	s.sConn = sConn
+	s.destConn = sConn
 
 	resp[1] = CMD_SUCCESS
 	if err = s.write(resp...); err != nil {
 		return err
 	}
 
-	s.log("forwading data")
-	go copy(s.conn, s.sConn)
-	err = copy(s.sConn, s.conn)
+	info("= forwading data")
+	go func() {
+		if err := copy(s.conn, s.destConn); err != nil {
+			errorLog("> error piping data client -> server: %v", err)
+		}
+	}()
+	err = copy(s.destConn, s.conn)
+	if err != nil {
+		errorLog("< error piping data client <- server: %v", err)
+	}
 
 	return err
 }
@@ -220,7 +237,8 @@ func atypIp6(s *socksConn) (*atypdef, error) {
 	if err != nil {
 		return nil, err
 	}
-	def := &atypdef{raw: bytes, proto: "tcp6", addr: net.IP(bytes).String()}
+	addr := fmt.Sprintf("[%s]", net.IP(bytes))
+	def := &atypdef{raw: bytes, proto: "tcp6", addr: addr}
 	return def, nil
 }
 func atypDomainname(s *socksConn) (*atypdef, error) {
@@ -233,7 +251,7 @@ func atypDomainname(s *socksConn) (*atypdef, error) {
 	if err != nil {
 		return nil, err
 	}
-	raw := make([]byte, len+1)
+	raw := make([]byte, 0, len+1)
 	raw = append(raw, n[0])
 	raw = append(raw, name...)
 
@@ -251,6 +269,7 @@ func hasNoAuthMethod(methods []byte) bool {
 }
 
 func (s *socksConn) write(data ...byte) error {
+	debug("> writing % x", data)
 	n, err := s.conn.Write(data)
 	if n < len(data) || err != nil {
 		return fmt.Errorf("could not write to connection: %v", err)
@@ -264,5 +283,6 @@ func (s *socksConn) read(len int) ([]byte, error) {
 	if n != len || err != nil {
 		return nil, fmt.Errorf("could not read from connection %d: %v", s.connId, err)
 	}
+	debug("< read % x", buf)
 	return buf, nil
 }
