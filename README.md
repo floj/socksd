@@ -19,3 +19,5 @@ Usage:
 ```
 ./socksd -port 8888
 ```
+Todo:
+- [ ] Unit tests
