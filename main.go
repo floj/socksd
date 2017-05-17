@@ -12,11 +12,20 @@ import (
 
 func main() {
 
+	// var minLevel string
+	// flag.StringVar(&minLevel, "loglevel", "WARN", "minimal log level to output")
 	var port int
 	flag.IntVar(&port, "port", 8888, "specify port to listen on")
 	flag.Parse()
 
-	info("Listening on %d", port)
+	// filter := &logutils.LevelFilter{
+	// 	Levels:   []logutils.LogLevel{"DEBUG", "INFO", "WARN", "ERROR"},
+	// 	MinLevel: logutils.LogLevel(minLevel),
+	// 	Writer:   os.Stderr,
+	// }
+	// log.SetOutput(filter)
+
+	log.Printf("Listening on %d\n", port)
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		errorLog("Could not listen for connections: %v", err)
@@ -36,16 +45,16 @@ func main() {
 }
 
 func handle(conn net.Conn, connId int) {
-	s := socksConn{connId: connId, conn: conn}
+	s := socksConn{connId: connId, clientConn: conn}
 	if err := s.handle(); err != nil {
-		errorLog("= error handling connection %d: %v", connId, err)
+		errorLog("= %d error handling request: %v", connId, err)
 	}
 }
 
 type socksConn struct {
-	connId   int
-	conn     net.Conn
-	destConn net.Conn
+	connId     int
+	clientConn net.Conn
+	svrConn    net.Conn
 }
 
 const (
@@ -88,9 +97,9 @@ func errorLog(format string, params ...interface{}) {
 }
 
 func (s *socksConn) handle() error {
-	defer s.conn.Close()
+	defer s.clientConn.Close()
 
-	info("< reading header")
+	info("< %d reading header", s.connId)
 
 	header, err := s.read(2)
 	if err != nil {
@@ -125,7 +134,7 @@ func (s *socksConn) handle() error {
 		return err
 	}
 
-	info("< reading request")
+	info("< %d reading request", s.connId)
 	request, err := s.read(4)
 	if err != nil {
 		return err
@@ -175,8 +184,8 @@ func (s *socksConn) handle() error {
 	resp = append(resp, def.raw...)
 	resp = append(resp, pbuf...)
 
-	info("> connectiong to %s", dest)
-	sConn, err := net.Dial(def.proto, dest)
+	info("> %d connecting to %s", s.connId, dest)
+	svrConn, err := net.Dial(def.proto, dest)
 	if err != nil {
 		resp[1] = CMD_HOST_UNREACHABLE
 		if wErr := s.write(resp...); wErr != nil {
@@ -184,42 +193,40 @@ func (s *socksConn) handle() error {
 		}
 		return fmt.Errorf("could not connect do destionation host: %v", err)
 	}
-	defer sConn.Close()
-	s.destConn = sConn
+	defer svrConn.Close()
+	s.svrConn = svrConn
 
 	resp[1] = CMD_SUCCESS
 	if err = s.write(resp...); err != nil {
 		return err
 	}
 
-	info("= forwading data")
-	go func() {
-		if err := copy(s.conn, s.destConn); err != nil {
-			errorLog("> error piping data client -> server: %v", err)
-		}
-	}()
-	err = copy(s.destConn, s.conn)
-	if err != nil {
-		errorLog("< error piping data client <- server: %v", err)
-	}
+	info("= %d forwading data %s <-> %s", s.connId, s.clientConn.RemoteAddr(), s.svrConn.RemoteAddr())
+	forwardConn(s.clientConn, svrConn)
 
-	return err
+	info("= %d closing connections", s.connId)
+
+	return nil
+}
+
+func forwardConn(src, dest net.Conn) {
+	go copy(src, dest)
+	copy(dest, src)
 }
 
 func copy(src, dest net.Conn) error {
 	buf := make([]byte, BUFFER_SIZE)
 	for {
-		n, rErr := src.Read(buf)
-		if rErr != io.EOF && rErr != nil {
-			return rErr
+		n, err := src.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
 		}
 
-		if _, wErr := dest.Write(buf[:n]); wErr != nil {
-			return wErr
-		}
-
-		if rErr == io.EOF {
-			return nil
+		if _, err = dest.Write(buf[:n]); err != nil {
+			return err
 		}
 	}
 }
@@ -270,7 +277,7 @@ func hasNoAuthMethod(methods []byte) bool {
 
 func (s *socksConn) write(data ...byte) error {
 	debug("> writing % x", data)
-	n, err := s.conn.Write(data)
+	n, err := s.clientConn.Write(data)
 	if n < len(data) || err != nil {
 		return fmt.Errorf("could not write to connection: %v", err)
 	}
@@ -279,7 +286,7 @@ func (s *socksConn) write(data ...byte) error {
 
 func (s *socksConn) read(len int) ([]byte, error) {
 	buf := make([]byte, len)
-	n, err := s.conn.Read(buf)
+	n, err := s.clientConn.Read(buf)
 	if n != len || err != nil {
 		return nil, fmt.Errorf("could not read from connection %d: %v", s.connId, err)
 	}
