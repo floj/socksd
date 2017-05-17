@@ -8,22 +8,25 @@ import (
 	"log"
 	"net"
 	"os"
+
+	"github.com/hashicorp/logutils"
 )
 
 func main() {
 
-	// var minLevel string
-	// flag.StringVar(&minLevel, "loglevel", "WARN", "minimal log level to output")
+	var minLevel string
 	var port int
+
+	flag.StringVar(&minLevel, "loglevel", "WARN", "minimal log level to output")
 	flag.IntVar(&port, "port", 8888, "specify port to listen on")
 	flag.Parse()
 
-	// filter := &logutils.LevelFilter{
-	// 	Levels:   []logutils.LogLevel{"DEBUG", "INFO", "WARN", "ERROR"},
-	// 	MinLevel: logutils.LogLevel(minLevel),
-	// 	Writer:   os.Stderr,
-	// }
-	// log.SetOutput(filter)
+	filter := &logutils.LevelFilter{
+		Levels:   []logutils.LogLevel{"DEBUG", "INFO", "WARN", "ERROR"},
+		MinLevel: logutils.LogLevel(minLevel),
+		Writer:   os.Stderr,
+	}
+	log.SetOutput(filter)
 
 	log.Printf("Listening on %d\n", port)
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
