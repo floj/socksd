@@ -20,5 +20,5 @@ Usage:
 ./socksd -port 8888
 ```
 Todo:
-- [ ] return correct response codes, especially `X'07` (Command not supported)
+- [ ] return correct response codes, especially `X'07'` (Command not supported)
 - [ ] Unit tests
