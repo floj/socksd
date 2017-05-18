@@ -218,20 +218,11 @@ func forwardConn(src, dest net.Conn) {
 }
 
 func copy(src, dest net.Conn) error {
-	buf := make([]byte, BUFFER_SIZE)
-	for {
-		n, err := src.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
-		}
-
-		if _, err = dest.Write(buf[:n]); err != nil {
-			return err
-		}
+	_, err := io.Copy(src, dest)
+	if err == io.EOF {
+		return nil
 	}
+	return err
 }
 
 func atypIp4(s *socksConn) (*atypdef, error) {
