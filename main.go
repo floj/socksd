@@ -205,16 +205,12 @@ func (s *socksConn) handle() error {
 	}
 
 	info("= %d forwading data %s <-> %s", s.connId, s.clientConn.RemoteAddr(), s.svrConn.RemoteAddr())
-	forwardConn(s.clientConn, svrConn)
+	go copy(s.clientConn, s.svrConn)
+	copy(s.svrConn, s.clientConn)
 
 	info("= %d closing connections", s.connId)
 
 	return nil
-}
-
-func forwardConn(src, dest net.Conn) {
-	go copy(src, dest)
-	copy(dest, src)
 }
 
 func copy(src, dest net.Conn) error {
