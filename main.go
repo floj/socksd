@@ -14,10 +14,11 @@ import (
 
 func main() {
 
-	var minLevel string
+	var minLevel, bindAddr string
 	var port int
 
 	flag.StringVar(&minLevel, "loglevel", "WARN", "minimal log level to output")
+	flag.StringVar(&bindAddr, "bind", "", "bind to specific address")
 	flag.IntVar(&port, "port", 8888, "specify port to listen on")
 	flag.Parse()
 
@@ -28,8 +29,8 @@ func main() {
 	}
 	log.SetOutput(filter)
 
-	log.Printf("Listening on %d\n", port)
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	log.Printf("Listening on %s:%d\n", bindAddr, port)
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", bindAddr, port))
 	if err != nil {
 		errorLog("Could not listen for connections: %v", err)
 		os.Exit(1)
